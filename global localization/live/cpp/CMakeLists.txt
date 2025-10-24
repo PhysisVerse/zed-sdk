@@ -17,10 +17,10 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
 find_package(GPS)
 
 if(GPS_FOUND)
-    add_definitions(-DGPSD_FOUND)
+    add_definitions(-DUSE_GPSD)
     message("Found GPSD library")
 else()
-    message("GPSD was not FOUND. the sample will not be able to read live GNSS data")
+    message(WARNING "GPSD was not FOUND. the sample will not be able to read live GNSS data")
 endif()
 
 IF(NOT MSVC)

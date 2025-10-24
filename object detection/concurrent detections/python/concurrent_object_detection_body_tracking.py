@@ -23,6 +23,7 @@
     with the ZED SDK and display the result in an OpenGL window.
 """
 
+import argparse
 import sys
 import numpy as np
 import cv2
@@ -40,10 +41,19 @@ import cv_viewer.tracking_viewer as cv_viewer
 #   --> Images will only appear if an object is detected since the batching system is based on OD detection.
 USE_BATCHING = False
 
-if __name__ == "__main__":
+def main(opt):
     print("Running object detection ... Press 'Esc' to quit")
+
+    # Determine memory type based on CuPy availability and user preference
+    use_gpu = gl.GPU_ACCELERATION_AVAILABLE and not opt.disable_gpu_data_transfer
+    mem_type = sl.MEM.GPU if use_gpu else sl.MEM.CPU
+
+    # Display memory type being used
+    if use_gpu:
+        print("🚀 Using GPU data transfer with CuPy")
+
     zed = sl.Camera()
-    
+
     # Create a InitParameters object and set configuration parameters
     init_params = sl.InitParameters()
     init_params.coordinate_units = sl.UNIT.METER
@@ -51,14 +61,12 @@ if __name__ == "__main__":
     init_params.depth_mode = sl.DEPTH_MODE.NEURAL
     init_params.depth_maximum_distance = 20
     is_playback = False                             # Defines if an SVO is used
-        
+
     # If applicable, use the SVO given as parameter
     # Otherwise use ZED live stream
-    if len(sys.argv) == 2:
-        filepath = sys.argv[1]
-        print("Using SVO file: {0}".format(filepath))
-        init_params.svo_real_time_mode = True
-        init_params.set_from_svo_file(filepath)
+    if opt.input_svo_file is not None:
+        print(f"Using SVO file: {opt.input_svo_file}")
+        init_params.set_from_svo_file(opt.input_svo_file)
         is_playback = True
 
     status = zed.open(init_params)
@@ -98,7 +106,7 @@ if __name__ == "__main__":
     point_cloud_res = sl.Resolution(min(camera_infos.camera_configuration.resolution.width, 720), min(camera_infos.camera_configuration.resolution.height, 404)) 
     point_cloud_render = sl.Mat()
     viewer.init(camera_infos.camera_model, point_cloud_res, obj_param.enable_tracking)
-    
+
     # Configure object detection runtime parameters
     obj_runtime_param = sl.ObjectDetectionRuntimeParameters()
     detection_confidence = 60
@@ -113,7 +121,7 @@ if __name__ == "__main__":
     runtime_params.confidence_threshold = 50
 
     # Create objects that will store SDK outputs
-    point_cloud = sl.Mat(point_cloud_res.width, point_cloud_res.height, sl.MAT_TYPE.F32_C4, sl.MEM.CPU)
+    point_cloud = sl.Mat(point_cloud_res.width, point_cloud_res.height, sl.MAT_TYPE.F32_C4, mem_type)
     objects = sl.Objects()
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
@@ -130,7 +138,6 @@ if __name__ == "__main__":
 
     # Camera pose
     cam_w_pose = sl.Pose()
-    cam_c_pose = sl.Pose()
 
     quit_app = False
 
@@ -147,30 +154,24 @@ if __name__ == "__main__":
             
             if (returned_state == sl.ERROR_CODE.SUCCESS and objects.is_new):
                 # Retrieve point cloud
-                zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA,sl.MEM.CPU, point_cloud_res)
-                point_cloud.copy_to(point_cloud_render)
+                zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA, mem_type, point_cloud_res)
                 # Retrieve image
                 zed.retrieve_image(image_left, sl.VIEW.LEFT, sl.MEM.CPU, display_resolution)
                 image_render_left = image_left.get_data()
                 # Get camera pose
                 zed.get_position(cam_w_pose, sl.REFERENCE_FRAME.WORLD)
 
-                update_render_view = True
-                update_3d_view = True
-
                 # 3D rendering
-                if update_3d_view:
-                    viewer.updateData(point_cloud_render, objects)
+                viewer.updateData(point_cloud, objects)
 
                 # 2D rendering
-                if update_render_view:
-                    cv_viewer.render_2D(image_left_ocv, image_scale, objects, obj_param.enable_tracking)
+                cv_viewer.render_2D(image_left_ocv, image_scale, objects, obj_param.enable_tracking)
 
             if (returned_state2 == sl.ERROR_CODE.SUCCESS and bodies.is_new):
                 cv_viewer.render_2D_SK(image_left_ocv, image_scale, bodies.body_list, obj_param.enable_tracking, sl.BODY_FORMAT.BODY_18)
-                
+
             cv2.imshow("ZED | Body tracking and Object detection", image_left_ocv)
-            cv2.waitKey(10)
+            cv2.waitKey(1)
 
         if (is_playback and (zed.get_svo_position() == zed.get_svo_number_of_frames()-1)):
             print("End of SVO")
@@ -188,3 +189,10 @@ if __name__ == "__main__":
     zed.disable_positional_tracking()
 
     zed.close()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input_svo_file', type=str, help='Path to an .svo file, if you want to replay it', default=None)
+    parser.add_argument('--disable-gpu-data-transfer', action='store_true', help='Disable GPU data transfer acceleration with CuPy even if CuPy is available')
+    opt = parser.parse_args()
+    main(opt)

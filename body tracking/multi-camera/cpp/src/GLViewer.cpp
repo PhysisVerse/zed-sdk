@@ -141,7 +141,11 @@ void GLViewer::init(int argc, char **argv) {
     shader.MVP_Mat = glGetUniformLocation(shader.it.getProgramId(), "u_mvpMatrix");
 
     // Create the camera
-    camera_ = CameraGL(sl::Translation(0, 2, 10), sl::Translation(0, 0, -1));
+    camera_ = CameraGL(sl::Translation(0, 3, 3), sl::Translation(0, 0, -1));
+    sl::float3 ea(-30,0,0);
+    sl::Rotation rot;
+    rot.setEulerAngles(ea, false);
+    camera_.rotate(rot);
 
     // Create the skeletons objects
     skeletons.setDrawingType(GL_LINES);
@@ -312,8 +316,13 @@ void GLViewer::render() {
 
 void GLViewer::setCameraPose(int id, sl::Transform pose) {
     const std::lock_guard<std::mutex> lock(mtx);
-    getColor(id, false);
+    auto clr = getColor(id, false);
     poses[id] = pose;
+
+    if(viewers.find(id) == viewers.end()){
+        sl::Mat view;
+        viewers[id].initialize(view, clr);
+    }
 }
 
 inline bool renderBody(const sl::BodyData& i, const bool isTrackingON) {
@@ -324,9 +333,7 @@ inline bool renderBody(const sl::BodyData& i, const bool isTrackingON) {
 }
 
 template<typename T>
-void createSKPrimitive(sl::BodyData& body, const std::vector<std::pair<T, T>>& map, Simple3DObject& skp, sl::float3 clr_id, bool raw) {
-    const float cylinder_thickness = raw ? 0.01f : 0.025f;
-
+void createSKPrimitive(sl::BodyData& body, const std::vector<std::pair<T, T>>& map, Simple3DObject& skp, sl::float3 clr_id) {    
     for (auto& limb : map) {
         sl::float3 kp_1 = body.keypoint[getIdx(limb.first)];
         sl::float3 kp_2 = body.keypoint[getIdx(limb.second)];
@@ -335,16 +342,16 @@ void createSKPrimitive(sl::BodyData& body, const std::vector<std::pair<T, T>>& m
     }
 }
 
-void GLViewer::addSKeleton(sl::BodyData& obj, Simple3DObject& simpleObj, sl::float3 clr_id, bool raw) {
+void addSKeleton(sl::BodyData& obj, Simple3DObject& simpleObj, sl::float3 clr_id) {
     switch (obj.keypoint.size()) {
     case 18:
-        createSKPrimitive(obj, sl::BODY_18_BONES, simpleObj, clr_id, raw);
+        createSKPrimitive(obj, sl::BODY_18_BONES, simpleObj, clr_id);
         break;
     case 34:
-        createSKPrimitive(obj, sl::BODY_34_BONES, simpleObj, clr_id, raw);
+        createSKPrimitive(obj, sl::BODY_34_BONES, simpleObj, clr_id);
         break;
     case 38:
-        createSKPrimitive(obj, sl::BODY_38_BONES, simpleObj, clr_id, raw);
+        createSKPrimitive(obj, sl::BODY_38_BONES, simpleObj, clr_id);
         break;
     }
 }
@@ -357,7 +364,7 @@ void GLViewer::updateBodies(sl::Bodies &bodies, std::map<sl::CameraIdentifier, s
         for(auto &it:bodies.body_list) {
             auto clr = getColor(it.id, true);
             if (renderBody(it, bodies.is_tracked))
-                addSKeleton(it, skeletons, clr, false);
+                addSKeleton(it, skeletons, clr);
         }
     }
 
@@ -382,7 +389,7 @@ void GLViewer::updateBodies(sl::Bodies &bodies, std::map<sl::CameraIdentifier, s
 
             for (auto& sk : it.second.body_list) {
                 if(renderBody(sk, it.second.is_tracked))
-                    addSKeleton(sk, sk_r, clr, true);
+                    addSKeleton(sk, sk_r, clr);
             }
         }
             
@@ -463,11 +470,15 @@ void GLViewer::draw() {
     glUniformMatrix4fv(shader.MVP_Mat, 1, GL_TRUE, vpMatrix.m);
 
     floor_grid.draw();
+
     skeletons.draw();
 
-    if (show_raw)
+    if (show_raw){
+        glLineWidth(1.f);
         for (auto& it : skeletons_raw)
             it.second.draw();
+        glLineWidth(2.f);
+    }
 
     for (auto& it : viewers) {
         sl::Transform pose_ = vpMatrix * poses[it.first];
@@ -938,6 +949,9 @@ bool CameraViewer::initialize(sl::Mat &im, sl::float3 clr) {
     faces.push_back(sl::uint3(0,2,3));
 
     ref = im;
+    if(!ref.isInit()) 
+        return 1;
+        
 	shader.set(VERTEX_SHADER_TEXTURE, FRAGMENT_SHADER_TEXTURE);
     shMVPMatrixLocTex_ = glGetUniformLocation(shader.getProgramId(), "u_mvpMatrix");
 

@@ -58,9 +58,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    PositionalTrackingParameters tracking_parameters;
-    tracking_parameters.mode = sl::POSITIONAL_TRACKING_MODE::GEN_3;
-    zed.enablePositionalTracking(tracking_parameters);
+    zed.enablePositionalTracking();
 
     cv::String imWndName = "Image";
     cv::String depthWndName = "Depth";

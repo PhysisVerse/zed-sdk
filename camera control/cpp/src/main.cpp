@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
 
     // Open the camera
     auto returned_state = zed.open(init_parameters);
-    if (returned_state != ERROR_CODE::SUCCESS) {
+    if (returned_state > ERROR_CODE::SUCCESS) {
         print("Camera Open", returned_state, "Exit program.");
         return EXIT_FAILURE;
     }
@@ -199,7 +199,7 @@ void updateCameraSettings(char key, sl::Camera &zed, sl::InitParameters& init_pa
         std::cout << " Current Value : " << current_value << std::endl;
         break;
 
-        // Increase camera settings value ('+' key)
+    // Increase camera settings value ('+' key)
     case '+':
         zed.getCameraSettings(camera_settings_, current_value);
         zed.setCameraSettings(camera_settings_, current_value + step_camera_setting);
@@ -207,7 +207,7 @@ void updateCameraSettings(char key, sl::Camera &zed, sl::InitParameters& init_pa
         print(str_camera_settings + ": " + std::to_string(current_value));
         break;
 
-        // Decrease camera settings value ('-' key)
+    // Decrease camera settings value ('-' key)
     case '-':
         zed.getCameraSettings(camera_settings_, current_value);
         current_value = current_value > 0 ? current_value - step_camera_setting : 0; // take care of the 'default' value parameter:  VIDEO_SETTINGS_VALUE_AUTO
@@ -216,16 +216,16 @@ void updateCameraSettings(char key, sl::Camera &zed, sl::InitParameters& init_pa
         print(str_camera_settings + ": " + std::to_string(current_value));
         break;
 
-        //switch LED On :
+    //switch LED On :
     case 'l':
         led_on = !led_on;
         zed.setCameraSettings(sl::VIDEO_SETTINGS::LED_STATUS, led_on);
         break;
 
-        // Reset to default parameters
+    // Reset to default parameters
     case 'r':
         print("Reset all settings to default\n");
-        for (int s = (int) VIDEO_SETTINGS::BRIGHTNESS; s <= (int) VIDEO_SETTINGS::WHITEBALANCE_TEMPERATURE; s++)
+        for (int s = (int) VIDEO_SETTINGS::BRIGHTNESS; s < (int) VIDEO_SETTINGS::LAST; s++)
             zed.setCameraSettings(static_cast<VIDEO_SETTINGS> (s), sl::VIDEO_SETTINGS_VALUE_AUTO);
         break;
 
@@ -237,7 +237,7 @@ void updateCameraSettings(char key, sl::Camera &zed, sl::InitParameters& init_pa
         break;
 
     case 'f':
-        print("reset AEC_AGC_ROI to full res");
+        print("reset AEC_AGC_ROI to full image");
         zed.setCameraSettings(VIDEO_SETTINGS::AEC_AGC_ROI, selection_rect, sl::SIDE::BOTH, true);
         break;
 

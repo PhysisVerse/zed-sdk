@@ -31,9 +31,7 @@
 
 // ZED includes
 #include <sl/Camera.hpp>
-#ifndef _WIN32
 #include <sl/CameraOne.hpp>
-#endif
 
 // Sample includes
 #include "utils.hpp"
@@ -127,12 +125,8 @@ int main(int argc, char **argv) {
     const std::vector<sl::DeviceProperties> dev_stereo_list = sl::Camera::getDeviceList();
     printDeviceInfo(dev_stereo_list);
 
-#ifndef _WIN32
     const std::vector<sl::DeviceProperties> dev_one_list = sl::CameraOne::getDeviceList();
     printDeviceInfo(dev_one_list);
-#else
-    const std::vector<sl::DeviceProperties> dev_one_list;
-#endif
 
     const int nb_one = dev_one_list.size();
     const int nb_stereo = dev_stereo_list.size();
@@ -149,13 +143,11 @@ int main(int argc, char **argv) {
         zed_open |= openCamera<sl::Camera, sl::InitParameters>(zeds_stereo[z], dev_stereo_list[z].serial_number);
     }
 
-#ifndef _WIN32
     // Open the Mono cameras
     std::vector<sl::CameraOne> zeds_one(nb_one);
     for (int z = 0; z < nb_one; ++z) {
         zed_open |= openCamera<sl::CameraOne, sl::InitParametersOne>(zeds_one[z], dev_one_list[z].serial_number);
     }
-#endif
 
     if (!zed_open) {
         std::cout << "No ZED opened, exit program" << std::endl;
@@ -169,12 +161,10 @@ int main(int argc, char **argv) {
         if (zeds_stereo[z].isOpened())
             thread_pool[z] = std::thread(acquisition<sl::Camera>, std::ref(zeds_stereo[z]));
     }
-#ifndef _WIN32
     for (int z = 0; z < nb_one; z++) {
         if (zeds_one[z].isOpened())
             thread_pool[nb_stereo + z] = std::thread(acquisition<sl::CameraOne>, std::ref(zeds_one[z]));
     }
-#endif
 
     // Ctrl+C to close
     SetCtrlHandler();

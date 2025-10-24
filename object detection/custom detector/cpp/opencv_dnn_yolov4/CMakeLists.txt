@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 PROJECT(opencv_dnn_zed)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(LINK_SHARED_ZED "Link with the ZED SDK shared executable" ON)

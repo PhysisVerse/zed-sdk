@@ -129,14 +129,8 @@ def update_camera_settings(key, cam, runtime, mat):
             print(str_camera_settings + ": " + str(current_value - step_camera_settings))
     elif key == 114:  # for 'r' key
         # Reset all camera settings to default.
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.BRIGHTNESS, -1)
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.CONTRAST, -1)
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.HUE, -1)
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.SATURATION, -1)
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.SHARPNESS, -1)
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.GAIN, -1)
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, -1)
-        cam.set_camera_settings(sl.VIDEO_SETTINGS.WHITEBALANCE_TEMPERATURE, -1)
+        for setting in sl.VIDEO_SETTINGS:
+            cam.set_camera_settings(setting, -1)
         print("[Sample] Reset all settings to default")
     elif key == 108: # for 'l' key
         # Turn on or off camera LED.

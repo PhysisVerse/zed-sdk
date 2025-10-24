@@ -32,7 +32,7 @@
 #include <sl/Fusion.hpp>
 #include "display/GenericDisplay.h"
 #include "exporter/KMLExporter.h"
-#include "GNSSReplay.hpp"
+#include "gnss/IGNSSReader.h"
 
 sl::COORDINATE_SYSTEM user_coordinate_system = sl::COORDINATE_SYSTEM::RIGHT_HANDED_Y_UP;
 sl::UNIT user_unit = sl::UNIT::METER;
@@ -102,7 +102,6 @@ int main(int argc, char **argv) {
 
     // Enable positional tracking:
     sl::PositionalTrackingParameters pose_tracking_params;
-    pose_tracking_params.mode = sl::POSITIONAL_TRACKING_MODE::GEN_3;
     pose_tracking_params.enable_area_memory = false;
     auto positional_init = zed.enablePositionalTracking(pose_tracking_params);
     if (positional_init != sl::ERROR_CODE::SUCCESS) {
@@ -160,8 +159,7 @@ int main(int argc, char **argv) {
     std::cout << "To run the Live Server (web interface), go to 'map server' folder and run 'python3 -m http.server 8000' then open a browser to 'http://0.0.0.0:8000/'" << std::endl << std::endl;
     sl::Pose zed_pose;
 
-
-    GNSSReplay gnss_replay(gnss_file, &zed);
+    auto gnss_reader = IGNSSReader::create(&zed, true);
     while (viewer.isAvailable()) {
         // Grab camera:
         auto zed_status = zed.grab();
@@ -181,7 +179,7 @@ int main(int argc, char **argv) {
         sl::GNSSData input_gnss;
         sl::GNSSData input_gnss_sync;
 
-        if (gnss_replay.grab(input_gnss, zed_pose.timestamp.getNanoseconds()) == sl::FUSION_ERROR_CODE::SUCCESS) {
+        if (gnss_reader->grab(input_gnss, zed_pose.timestamp.data_ns) == sl::FUSION_ERROR_CODE::SUCCESS) {
             // Display it on the Live Server:
             auto ingest_error = fusion.ingestGNSSData(input_gnss);
             saveKMLData("raw_gnss.kml", input_gnss);

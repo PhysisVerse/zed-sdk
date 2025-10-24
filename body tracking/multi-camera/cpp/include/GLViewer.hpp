@@ -273,8 +273,6 @@ private:
     static void keyReleasedCallback(unsigned char c, int x, int y);
     static void idle();
 
-    void addSKeleton(sl::BodyData &, Simple3DObject &, sl::float3 clr_id, bool raw);
-
     sl::float3 getColor(int, bool);
 
     bool available;
