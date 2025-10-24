@@ -28,7 +28,6 @@
 #include <sl/Fusion.hpp>
 #include "display/GenericDisplay.h"
 #include "gnss_reader/IGNSSReader.h"
-#include "gnss_reader/GPSDReader.hpp"
 #include "exporter/KMLExporter.h"
 #include "exporter/GNSSSaver.h"
 #include "utils.hpp"
@@ -79,8 +78,7 @@ int main(int argc, char **argv) {
     while (zed.grab() != sl::ERROR_CODE::SUCCESS) {
     }
     // Enable GNSS data producing:
-    GPSDReader gnss_reader;
-    gnss_reader.initialize();
+    auto gnss_reader = IGNSSReader::create(&zed, false);
 
     // Subscribe to Odometry
     sl::CameraIdentifier uuid(zed.getCameraInformation().serial_number);
@@ -93,8 +91,7 @@ int main(int argc, char **argv) {
         std::cout << "[Fusion][ERROR] Could not start tracking, error: " << tracking_error_code << std::endl;
         return EXIT_FAILURE;
     }
-
-
+    
     std::cout << "Start grabbing data... Global localization data will be displayed on the Live Server" << std::endl;
 
     GenericDisplay viewer;
@@ -112,7 +109,7 @@ int main(int argc, char **argv) {
 
         // Get GNSS data:
         sl::GNSSData input_gnss;
-        if (gnss_reader.grab(input_gnss) == sl::ERROR_CODE::SUCCESS) {
+        if (gnss_reader->grab(input_gnss, zed.getTimestamp(sl::TIME_REFERENCE::IMAGE).data_ns) == sl::FUSION_ERROR_CODE::SUCCESS) {
             // Display it on the Live Server:
             viewer.updateRawGeoPoseData(input_gnss);
 

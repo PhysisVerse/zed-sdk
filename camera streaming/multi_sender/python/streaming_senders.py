@@ -68,7 +68,7 @@ def open_camera(zed, sn, port, camera_fps=30):
         init_params = sl.InitParameters()
         init_params.depth_mode = sl.DEPTH_MODE.NONE  # No depth mode for this example
     elif isinstance(zed, sl.CameraOne):
-        init_params = sl.CameraOne.InitParametersOne()
+        init_params = sl.InitParametersOne()
     else:
         print(f"Unsupported camera type: {type(zed)}")
         return False
@@ -112,11 +112,8 @@ def main():
     # Get the list of available ZED cameras
     dev_stereo_list = sl.Camera.get_device_list()
     print_device_info(dev_stereo_list)
-    if sys.platform != "win32":
-        dev_mono_list = sl.CameraOne.get_device_list()
-        print_device_info(dev_mono_list)
-    else:
-        dev_mono_list = []
+    dev_mono_list = sl.CameraOne.get_device_list()
+    print_device_info(dev_mono_list)
 
     nb_cameras = len(dev_stereo_list) + len(dev_mono_list)
     if nb_cameras == 0:

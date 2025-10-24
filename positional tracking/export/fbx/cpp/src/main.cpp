@@ -59,7 +59,6 @@ int main(int argc, char **argv) {
     // Enable positional tracking
     PositionalTrackingParameters tracking_parameters;
     tracking_parameters.enable_area_memory = false;
-    tracking_parameters.enable_pose_smoothing = true;
 
     // Enable this parameter to align the tracking with the floor plane position. 
     // It is recommended not to disable it unless you know what you are doing.

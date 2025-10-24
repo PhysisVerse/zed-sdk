@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     constexpr sl::COORDINATE_SYSTEM COORDINATE_SYSTEM = sl::COORDINATE_SYSTEM::RIGHT_HANDED_Y_UP;
     constexpr sl::UNIT UNIT = sl::UNIT::METER;
 
-    // Read json file containing the configuration of your multicamera setup.    
+    // Read json file containing the configuration of your multicamera setup.
     auto configurations = sl::readFusionConfigurationFile(argv[1], COORDINATE_SYSTEM, UNIT);
 
     if (configurations.empty()) {
@@ -102,7 +102,6 @@ int main(int argc, char **argv) {
     sl::InitFusionParameters init_params;
     init_params.coordinate_units = UNIT;
     init_params.coordinate_system = COORDINATE_SYSTEM;
-    init_params.verbose = true;
 
     sl::Resolution low_res(512,360);
     init_params.maximum_working_resolution = low_res;
@@ -141,6 +140,7 @@ int main(int argc, char **argv) {
     body_tracking_runtime_parameters.skeleton_minimum_allowed_keypoints = 7;
     // we can also want to retrieve skeleton seen by multiple camera, in this case at least half of them
     body_tracking_runtime_parameters.skeleton_minimum_allowed_camera = cameras.size() / 2.;
+    body_tracking_runtime_parameters.skeleton_smoothing = 0.1f;
 
 
     // creation of a 3D viewer
@@ -167,21 +167,22 @@ int main(int argc, char **argv) {
 
         // run the fusion process (which gather data from all camera, sync them and process them)
         if (fusion.process() == sl::FUSION_ERROR_CODE::SUCCESS) {
+
             // Retrieve fused body
             fusion.retrieveBodies(fused_bodies, body_tracking_runtime_parameters);
-
             // for debug, you can retrieve the data sent by each camera
             for (auto& id : cameras) { 
                 fusion.retrieveBodies(camera_raw_data[id], body_tracking_runtime_parameters, id);
-                sl::Pose pose;
-                if(fusion.getPosition(pose, sl::REFERENCE_FRAME::WORLD, id, sl::POSITION_TYPE::RAW) == sl::POSITIONAL_TRACKING_STATE::OK)
-                    viewer.setCameraPose(id.sn, pose.pose_data);
 
                 auto state_view = fusion.retrieveImage(views[id], id, low_res);
                 auto state_pc = fusion.retrieveMeasure(pointClouds[id], id, sl::MEASURE::XYZBGRA, low_res);
 
                 if (state_view == sl::FUSION_ERROR_CODE::SUCCESS && state_pc == sl::FUSION_ERROR_CODE::SUCCESS)
                     viewer.updateCamera(id.sn, views[id], pointClouds[id]);
+
+                sl::Pose pose;
+                if(fusion.getPosition(pose, sl::REFERENCE_FRAME::WORLD, id, sl::POSITION_TYPE::RAW) == sl::POSITIONAL_TRACKING_STATE::OK)
+                    viewer.setCameraPose(id.sn, pose.pose_data);
             }
 
             // get metrics about the fusion process for monitoring purposes

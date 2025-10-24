@@ -28,7 +28,6 @@
 
 #include "display/GenericDisplay.h"
 #include "gnss_reader/IGNSSReader.h"
-#include "gnss_reader/GPSDReader.hpp"
 
 int main(int argc, char **argv)
 {
@@ -63,8 +62,7 @@ int main(int argc, char **argv)
     // Enable odometry publishing:
     zed.startPublishing();
     // Enable GNSS data producing:
-    GPSDReader gnss_reader;
-    gnss_reader.initialize();
+    auto gnss_reader = IGNSSReader::create(&zed, false);
 
     // Subscribe to Odometry
     sl::CameraIdentifier uuid(zed.getCameraInformation().serial_number);
@@ -93,9 +91,10 @@ int main(int argc, char **argv)
             // is the position without any GNSS/cameras fusion
             zed.getPosition(zed_pose, sl::REFERENCE_FRAME::CAMERA);
         }
+        
         // Get GNSS data:
         sl::GNSSData input_gnss;
-        if (gnss_reader.grab(input_gnss) == sl::ERROR_CODE::SUCCESS)
+        if (gnss_reader->grab(input_gnss, zed.getTimestamp(sl::TIME_REFERENCE::IMAGE).data_ns) == sl::FUSION_ERROR_CODE::SUCCESS)
         {
             // Display it on the Live Server:
             viewer.updateRawGeoPoseData(input_gnss);
@@ -121,8 +120,9 @@ int main(int argc, char **argv)
             // Get position into the GNSS coordinate system - this needs a initialization between CAMERA 
             // and GNSS. When the initialization is finish the getGeoPose will return sl::POSITIONAL_TRACKING_STATE::OK
             sl::GeoPose current_geopose;
-            auto current_geopose_satus = fusion.getGeoPose(current_geopose);
-            if (current_geopose_satus == sl::GNSS_FUSION_STATUS::OK)
+            auto current_geopose_status = fusion.getGeoPose(current_geopose);
+
+            if (current_geopose_status == sl::GNSS_FUSION_STATUS::OK)
             {
                 // Display it on the Live Server:
                 viewer.updateGeoPoseData(current_geopose);

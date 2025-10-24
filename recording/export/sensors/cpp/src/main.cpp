@@ -58,24 +58,17 @@ int main(int argc, char **argv)
     unsigned imu_data_grabbed_number = 0;
     sl::Timestamp old_imu_timestamp;
     std::vector<nlohmann::json> all_sensors_data_serialized;
+    std::vector<sl::SensorsData> all_sensors_data_in_current_frame;
     while (imu_data_grabbed_number < 4000)
     {
-        sl::SensorsData sensor_data;
-        if (zed.getSensorsData(sensor_data, sl::TIME_REFERENCE::CURRENT) == sl::ERROR_CODE::SUCCESS)
+        all_sensors_data_in_current_frame.clear();
+        zed.grab();
+        zed.getSensorsDataBatch(all_sensors_data_in_current_frame);
+        imu_data_grabbed_number += all_sensors_data_in_current_frame.size();
+        for (const auto& sensor_data : all_sensors_data_in_current_frame)
         {
-            // Check if data is new
-            if (old_imu_timestamp != sensor_data.imu.timestamp)
-            {
-                old_imu_timestamp = sensor_data.imu.timestamp;
-                imu_data_grabbed_number++;
-                nlohmann::json sensors_data_serialized = SensorsData2Json(sensor_data);
-                all_sensors_data_serialized.push_back(sensors_data_serialized);
-            }
-        }
-        else if (read_svo)
-        {
-            // in case of svo, we need to call grab to get the next frame sensor data
-            zed.grab();
+            nlohmann::json sensors_data_serialized = SensorsData2Json(sensor_data);
+            all_sensors_data_serialized.push_back(sensors_data_serialized);
         }
     }
 

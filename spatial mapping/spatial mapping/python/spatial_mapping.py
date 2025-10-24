@@ -49,7 +49,6 @@ def main(opt):
     
     tracking_state = sl.POSITIONAL_TRACKING_STATE.OFF
     positional_tracking_parameters = sl.PositionalTrackingParameters()
-    positional_tracking_parameters.set_floor_as_origin = True
     returned_state = zed.enable_positional_tracking(positional_tracking_parameters)
     if returned_state != sl.ERROR_CODE.SUCCESS:
         print("Enable Positional Tracking : "+repr(status)+". Exit program.")

@@ -224,6 +224,7 @@ void updateCameraSettings(char key, sl::Camera &zed) {
             case 's':
             switchCameraSettings();
             zed.getCameraSettings(camera_settings_,current_value);
+            print(str_camera_settings+": "+std::to_string(current_value));
             break;
 
             // Increase camera settings value ('+' key)
@@ -280,8 +281,8 @@ void switchCameraSettings() {
     camera_settings_ = static_cast<VIDEO_SETTINGS> ((int) camera_settings_ + 1);
 
     // reset to 1st setting
-    if (camera_settings_ == VIDEO_SETTINGS::LED_STATUS)
-        camera_settings_ = VIDEO_SETTINGS::BRIGHTNESS;
+    if (camera_settings_ == VIDEO_SETTINGS::LAST)
+        camera_settings_ = static_cast<VIDEO_SETTINGS> (0);
 
     // select the right step
     step_camera_setting = (camera_settings_ == VIDEO_SETTINGS::WHITEBALANCE_TEMPERATURE) ? 100 : 1;

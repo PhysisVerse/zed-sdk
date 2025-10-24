@@ -14,6 +14,7 @@ This tutorial simply shows how to configure and open the ZED, then print its ser
 - [ZED SDK Python API](https://www.stereolabs.com/docs/app-development/python/install/)
 
 # Code overview
+
 The ZED API provides low-level access to camera control and configuration. To use the ZED in your application, you will need to create and open a Camera object. The API can be used with two different video inputs: the ZED live video (Live mode) or video files recorded in SVO format with the ZED API (Playback mode).
 
 ## Camera Configuration
@@ -79,3 +80,129 @@ zed.close()
 return 0
 ```
 
+# Testing the ZED SDK Python GPU support with CuPy
+
+CuPy is a NumPy/SciPy-compatible Array Library for GPU-accelerated Computing with Python (see https://cupy.dev/) and the ZED SDK Python API support getting data in its format.
+
+If you want to run high performance python scripts using CuPy and GPU retrieval, you can first start by instally CuPy (see https://cupy.dev/) and then running the script `hello_zed_gpu.py`. The script will:
+- Open a connected ZED camera.
+- Retrieve an image.
+- Run some operations and benchmark on the retrieved image.
+- Display on the terminal the results of the tests.
+
+Without deep-diving into the script content, you can just look at its output to validate everything is fine with your setup.
+
+For example, on an Orin NX16 with a ZED-X
+``` bash
+> python hello_zed_gpu.py
+✅ CuPy detected - GPU acceleration available
+   CuPy version: 13.5.1
+   CUDA version: 12080
+ZED SDK CuPy Integration Test
+========================================
+Opening ZED camera...
+[2025-07-31 12:54:15 UTC][ZED][INFO] Logging level INFO
+[2025-07-31 12:54:16 UTC][ZED][INFO] Using GMSL input... Switched to default resolution HD1200
+[2025-07-31 12:54:19 UTC][ZED][INFO] [Init]  Camera FW version: 2001
+[2025-07-31 12:54:19 UTC][ZED][INFO] [Init]  Video mode: HD1200@30
+[2025-07-31 12:54:19 UTC][ZED][INFO] [Init]  Serial Number: S/N 48922857
+[2025-07-31 12:54:19 UTC][ZED][INFO] [Init]  Depth mode: NEURAL
+ZED camera opened successfully.
+Retrieving image data...
+Retrieved image on GPU: 1920x1200
+
+🧪 Testing GPU image processing (basic grayscale conversion)...
+   Input image: (1200, 1920, 4)
+   Processed image: (1200, 1920)
+✅ GPU processing test passed!
+========================================
+
+💾 Testing memory allocation strategies...
+   CPU allocation: (480, 640, 4), float32
+   GPU allocation: (480, 640, 4), float32
+   CPU->GPU transfer: (480, 640, 4)
+   GPU->CPU transfer: (480, 640, 4)
+✅ Memory allocation test passed!
+========================================
+
+🔍 Testing GPU memory usage...
+   Initial GPU memory usage: 0.0 MB
+   After allocation: 15.3 MB
+   After cleanup: 0.0 MB
+✅ GPU memory test passed!
+========================================
+
+🔬 Testing data integrity...
+   Data integrity verified: (2, 2, 4)
+✅ Data integrity test passed!
+========================================
+
+⚡ Running performance benchmark...
+   Benchmark image size: 1920x1200
+   CPU processing (10 iterations): 538.658 milliseconds
+   GPU processing (10 iterations): 93.961 milliseconds
+   Speedup: 5.7x
+🚀 GPU processing is faster!
+========================================
+
+🎉 All tests completed!
+   Your system is ready for GPU-accelerated ZED processing with the Python API!
+```
+
+Similarly, on a computer equipped with a NVIDIA GeForce RTX 4060 Ti and with a ZED2:
+``` bash
+> python hello_zed_gpu.py
+✅ CuPy detected - GPU acceleration available
+   CuPy version: 13.4.1
+   CUDA version: 11080
+ZED SDK CuPy Integration Test
+========================================
+Opening ZED camera...
+[2025-07-30 15:38:50 UTC][ZED][INFO] Logging level INFO
+[2025-07-30 15:38:51 UTC][ZED][INFO] Using USB input... Switched to default resolution HD720
+[2025-07-30 15:38:52 UTC][ZED][INFO] [Init]  Camera successfully opened.
+[2025-07-30 15:38:52 UTC][ZED][INFO] [Init]  Camera FW version: 1523
+[2025-07-30 15:38:52 UTC][ZED][INFO] [Init]  Video mode: HD720@30
+[2025-07-30 15:38:52 UTC][ZED][INFO] [Init]  Serial Number: S/N 24046162
+[2025-07-30 15:38:52 UTC][ZED][INFO] [Init]  Depth mode: NEURAL
+ZED camera opened successfully.
+Retrieving image data...
+Retrieved image on GPU: 1280x720
+
+🧪 Testing GPU image processing (basic grayscale conversion)...
+   Input image: (720, 1280, 4)
+   Processed image: (720, 1280)
+✅ GPU processing test passed!
+========================================
+
+💾 Testing memory allocation strategies...
+   CPU allocation: (480, 640, 4), float32
+   GPU allocation: (480, 640, 4), float32
+   CPU->GPU transfer: (480, 640, 4)
+   GPU->CPU transfer: (480, 640, 4)
+✅ Memory allocation test passed!
+========================================
+
+🔍 Testing GPU memory usage...
+   Initial GPU memory usage: 0.0 MB
+   After allocation: 15.3 MB
+   After cleanup: 0.0 MB
+✅ GPU memory test passed!
+========================================
+
+🔬 Testing data integrity...
+   Data integrity verified: (2, 2, 4)
+✅ Data integrity test passed!
+========================================
+
+⚡ Running performance benchmark...
+   Benchmark image size: 1280x720
+   CPU processing (10 iterations): 97.423 milliseconds
+   GPU processing (10 iterations): 1.970 milliseconds
+   Speedup: 49.4x
+🚀 GPU processing is faster!
+========================================
+
+🎉 All tests completed!
+   Your system is ready for GPU-accelerated ZED processing with the Python API!
+```

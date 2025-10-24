@@ -1,11 +1,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
 PROJECT(ZED_One_live)
 
-if (WIN32)
-	message(FATAL_ERROR "ZED One is not yet supported on windows.")
-endif(WIN32)
-
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 SET(CMAKE_BUILD_TYPE "RelWithDebInfo")
 

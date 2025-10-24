@@ -81,9 +81,7 @@ int main(int argc, char **argv) {
     Pose pose;
     POSITIONAL_TRACKING_STATE tracking_state = POSITIONAL_TRACKING_STATE::OFF;
 
-    sl::PositionalTrackingParameters ptp;
-    ptp.mode = sl::POSITIONAL_TRACKING_MODE::GEN_3;
-    returned_state = zed.enablePositionalTracking(ptp);
+    returned_state = zed.enablePositionalTracking();
     if (returned_state > ERROR_CODE::SUCCESS) {
         print("Enabling positional tracking failed: ", returned_state);
         zed.close();

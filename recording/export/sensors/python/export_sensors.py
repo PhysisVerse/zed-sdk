@@ -147,17 +147,18 @@ if (__name__ == "__main__"):
 
     # Grab sensors values
     all_sensors_data_serialized = []
+    all_sensors_data_in_current_frame = []
     imu_data_grabbed_number = 0
-    old_imu_timestamp = 0
     print("Start grabbing 4000 IMU data")
     while (imu_data_grabbed_number < 4000):
         sensor_data = sl.SensorsData()
-        if (zed.get_sensors_data(sensor_data, sl.TIME_REFERENCE.CURRENT)):
-            if (old_imu_timestamp != sensor_data.get_imu_data().timestamp):
-                old_imu_timestamp = sensor_data.get_imu_data().timestamp
-                imu_data_grabbed_number += 1
-                sensors_data_serialized = SensorsDataToJSON(sensor_data)
-                all_sensors_data_serialized.append(sensors_data_serialized)
+        all_sensors_data_in_current_frame.clear()
+        zed.grab()
+        zed.get_sensors_data_batch(all_sensors_data_in_current_frame)
+        imu_data_grabbed_number += len(all_sensors_data_in_current_frame)
+        for sensor_data in all_sensors_data_in_current_frame:
+            sensors_data_serialized = SensorsDataToJSON(sensor_data)
+            all_sensors_data_serialized.append(sensors_data_serialized)
     zed.close()
     final_json = {}
     final_json["Sensors"] = all_sensors_data_serialized

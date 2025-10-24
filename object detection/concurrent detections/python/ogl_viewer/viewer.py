@@ -60,6 +60,169 @@ M_PI = 3.1415926
 
 GRID_SIZE = 9.0
 
+
+try:
+    from cuda.bindings import runtime as cudart
+    import cupy as cp
+
+    GPU_ACCELERATION_AVAILABLE = True
+
+    def format_cudart_err(err):
+        return (
+            f"{cudart.cudaGetErrorName(err)[1].decode('utf-8')}({int(err)}): "
+            f"{cudart.cudaGetErrorString(err)[1].decode('utf-8')}"
+        )
+
+    def check_cudart_err(args):
+        if isinstance(args, tuple):
+            assert len(args) >= 1
+            err = args[0]
+            if len(args) == 1:
+                ret = None
+            elif len(args) == 2:
+                ret = args[1]
+            else:
+                ret = args[1:]
+        else:
+            err = args
+            ret = None
+
+        assert isinstance(err, cudart.cudaError_t), type(err)
+        if err != cudart.cudaError_t.cudaSuccess:
+            raise RuntimeError(format_cudart_err(err))
+
+        return ret
+
+    class CudaOpenGLMappedBuffer:
+        def __init__(self, gl_buffer, flags=0):
+            self._gl_buffer = int(gl_buffer)
+            self._flags = int(flags)
+            self._graphics_ressource = None
+            self._cuda_buffer = None
+            self.register()
+
+        @property
+        def gl_buffer(self):
+            return self._gl_buffer
+
+        @property
+        def cuda_buffer(self):
+            assert self.mapped
+            return self._cuda_buffer
+
+        @property
+        def graphics_ressource(self):
+            assert self.registered
+            return self._graphics_ressource
+
+        @property
+        def registered(self):
+            return self._graphics_ressource is not None
+
+        @property
+        def mapped(self):
+            return self._cuda_buffer is not None
+
+        def __enter__(self):
+            return self.map()
+
+        def __exit__(self, exc_type, exc_value, trace):
+            self.unmap()
+            return False
+
+        def __del__(self):
+            try:
+                self.unregister()
+            except:
+                # Ignore errors during cleanup (e.g., during Python shutdown)
+                pass
+
+        def register(self):
+            if self.registered:
+                return self._graphics_ressource
+            self._graphics_ressource = check_cudart_err(
+                cudart.cudaGraphicsGLRegisterBuffer(self._gl_buffer, self._flags)
+            )
+            return self._graphics_ressource
+
+        def unregister(self):
+            if not self.registered:
+                return self
+            try:
+                self.unmap()
+                if cudart is not None:  # Check if cudart is still available
+                    check_cudart_err(
+                        cudart.cudaGraphicsUnregisterResource(self._graphics_ressource)
+                    )
+                self._graphics_ressource = None
+            except Exception:
+                # Ignore errors during cleanup (e.g., during Python shutdown)
+                self._graphics_ressource = None
+            return self
+
+        def map(self, stream=None):
+            if not self.registered:
+                raise RuntimeError("Cannot map an unregistered buffer.")
+            if self.mapped:
+                return self._cuda_buffer
+
+            check_cudart_err(
+                cudart.cudaGraphicsMapResources(1, self._graphics_ressource, stream)
+            )
+
+            ptr, size = check_cudart_err(
+                cudart.cudaGraphicsResourceGetMappedPointer(self._graphics_ressource)
+            )
+
+            self._cuda_buffer = cp.cuda.MemoryPointer(
+                cp.cuda.UnownedMemory(ptr, size, self), 0
+            )
+            return self._cuda_buffer
+
+        def unmap(self, stream=None):
+            if not self.registered:
+                raise RuntimeError("Cannot unmap an unregistered buffer.")
+            if not self.mapped:
+                return self
+
+            try:
+                if cudart is not None:  # Check if cudart is still available
+                    check_cudart_err(
+                        cudart.cudaGraphicsUnmapResources(1, self._graphics_ressource, stream)
+                    )
+                self._cuda_buffer = None
+            except Exception:
+                # Force cleanup even if unmap fails
+                self._cuda_buffer = None
+            return self
+
+    class CudaOpenGLMappedArray(CudaOpenGLMappedBuffer):
+        def __init__(self, dtype, shape, gl_buffer, flags=0, strides=None, order='C'):
+            super().__init__(gl_buffer, flags)
+            self._dtype = dtype
+            self._shape = shape
+            self._strides = strides
+            self._order = order
+
+        @property
+        def cuda_array(self):
+            assert self.mapped
+            return cp.ndarray(
+                shape=self._shape,
+                dtype=self._dtype,
+                strides=self._strides,
+                order=self._order,
+                memptr=self._cuda_buffer,
+            )
+
+        def map(self, *args, **kwargs):
+            super().map(*args, **kwargs)
+            return self.cuda_array
+
+except ImportError:
+    GPU_ACCELERATION_AVAILABLE = False
+
+
 def generate_color_id(_idx):
     clr = np.divide(generate_color_id_u(_idx), 255.0)
     clr[0], clr[2] = clr[2], clr[0]
@@ -93,6 +256,7 @@ class Shader:
             glDeleteShader(fragment_id)
 
     def compile(self, _type, _src):
+        shader_id = None
         try:
             shader_id = glCreateShader(_type)
             if shader_id == 0:
@@ -124,6 +288,8 @@ class Simple3DObject:
         self.clear()
         self.pt_type = pts_size
         self.clr_type = clr_size
+        self.cuda_mapped_buffer = None
+        self.use_gpu = GPU_ACCELERATION_AVAILABLE and not _is_static
 
     def add_pt(self, _pts):  # _pts [x,y,z]
         for pt in _pts:
@@ -328,23 +494,97 @@ class Simple3DObject:
 
         self.elementbufferSize = res.width * res.height
 
+        # Initialize vertex buffer (for XYZRGBA data)
         glBindBuffer(GL_ARRAY_BUFFER, self.vboID[0])
         glBufferData(GL_ARRAY_BUFFER, self.elementbufferSize * self.pt_type * self.vertices.itemsize, None, type_draw)
-        
-        if(self.clr_type):
+
+        # Try to set up GPU acceleration if available
+        if self.use_gpu:
+            try:
+                flags = cudart.cudaGraphicsRegisterFlags.cudaGraphicsRegisterFlagsWriteDiscard
+                self.cuda_mapped_buffer = CudaOpenGLMappedArray(
+                    dtype=np.float32, 
+                    shape=(self.elementbufferSize, self.pt_type), 
+                    gl_buffer=self.vboID[0], 
+                    flags=flags
+                )
+            except Exception as e:
+                print(f"Failed to initialize GPU acceleration, falling back to CPU: {e}")
+                self.use_gpu = False
+                self.cuda_mapped_buffer = None
+
+        # Initialize color buffer (not used for point clouds with XYZRGBA)
+        if self.clr_type:
             glBindBuffer(GL_ARRAY_BUFFER, self.vboID[1])
             glBufferData(GL_ARRAY_BUFFER, self.elementbufferSize * self.clr_type * self.colors.itemsize, None, type_draw)
 
         for i in range (0, self.elementbufferSize):
-            self.indices.append(i+1)
+            self.indices.append(i)
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.vboID[2])
         glBufferData(GL_ELEMENT_ARRAY_BUFFER,len(self.indices) * self.indices.itemsize,(GLuint * len(self.indices))(*self.indices), type_draw)
-        
+
     def setPoints(self, pc):
-        glBindBuffer(GL_ARRAY_BUFFER, self.vboID[0])
-        glBufferSubData(GL_ARRAY_BUFFER, 0, self.elementbufferSize * self.pt_type * self.vertices.itemsize, ctypes.c_void_p(pc.get_pointer()))
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        """Update point cloud data from sl.Mat"""
+        if not pc.is_init():
+            return
+
+        try:
+            if self.use_gpu and self.cuda_mapped_buffer and pc.get_memory_type() in (sl.MEM.GPU, sl.MEM.BOTH):
+                self.setPointsGPU(pc)
+            else:
+                self.setPointsCPU(pc)
+        except Exception as e:
+            print(f"Error setting points: {e}")
+            # Fallback to CPU if GPU fails
+            if self.use_gpu:
+                print("Falling back to CPU processing")
+                self.use_gpu = False
+                self.setPointsCPU(pc)
+
+    def setPointsGPU(self, pc):
+        """Set points using GPU acceleration with CUDA-OpenGL interop"""
+        try:
+            # Get point cloud data from GPU memory
+            cupy_arr = pc.get_data(sl.MEM.GPU)
+
+            # Map OpenGL buffer to CUDA memory
+            with self.cuda_mapped_buffer as cuda_array:
+                # Reshape point cloud data to match buffer format
+                if cupy_arr.ndim == 3:  # (height, width, channels)
+                    pc_flat = cupy_arr.reshape(-1, cupy_arr.shape[-1])
+                else:
+                    pc_flat = cupy_arr
+
+                # Copy data to GPU buffer (optimized GPU-to-GPU copy with continuous memory)
+                points_to_copy = min(pc_flat.shape[0], cuda_array.shape[0])
+                cuda_array[:points_to_copy] = pc_flat[:points_to_copy]
+
+                # Zero out remaining buffer if needed
+                if points_to_copy < cuda_array.shape[0]:
+                    cuda_array[points_to_copy:] = 0
+
+        except Exception as e:
+            print(f"GPU point cloud update failed: {e}")
+            raise
+
+    def setPointsCPU(self, pc):
+        """Fallback CPU method for setting points"""
+        try:
+            # Ensure data is available on CPU
+            if pc.get_memory_type() == sl.MEM.GPU:
+                pc.update_cpu_from_gpu()
+
+            # Get CPU pointer and upload to GPU buffer
+            glBindBuffer(GL_ARRAY_BUFFER, self.vboID[0])
+            data_ptr = pc.get_pointer(sl.MEM.CPU)
+            buffer_size = self.elementbufferSize * self.pt_type * 4  # 4 bytes per float32
+            glBufferSubData(GL_ARRAY_BUFFER, 0, buffer_size, ctypes.c_void_p(data_ptr))
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        except Exception as e:
+            print(f"CPU point cloud update failed: {e}")
+            raise
 
     def clear(self):        
         self.vertices = array.array('f')
@@ -370,8 +610,17 @@ class Simple3DObject:
             glDrawElements(self.drawing_type, self.elementbufferSize, GL_UNSIGNED_INT, None)      
             
             glDisableVertexAttribArray(0)
-            glDisableVertexAttribArray(1)
-    
+            if self.clr_type:
+                glDisableVertexAttribArray(1)
+
+    def __del__(self):
+        """Cleanup GPU resources"""
+        if hasattr(self, 'cuda_mapped_buffer') and self.cuda_mapped_buffer:
+            try:
+                self.cuda_mapped_buffer.unregister()
+            except:
+                pass
+
 class GLViewer:
     def __init__(self):
         self.available = False
@@ -479,23 +728,23 @@ class GLViewer:
 
     def updateData(self, pc, _objs):
         self.mutex.acquire()
-        self.point_cloud.setPoints(pc)
-        
-        # Clear frame objects
-        self.BBox_edges.clear()
-        self.skeletons.clear()
-        self.BBox_faces.clear()
+        try:
+            self.point_cloud.setPoints(pc)
+            # Clear frame objects
+            self.BBox_edges.clear()
+            self.skeletons.clear()
+            self.BBox_faces.clear()
 
-        for i in range(len(_objs.object_list)):
-            if self.render_object(_objs.object_list[i]):
-                bounding_box = np.array(_objs.object_list[i].bounding_box)
-                if bounding_box.any():
-                    color_id = generate_color_id(_objs.object_list[i].id)
+            for i in range(len(_objs.object_list)):
+                if self.render_object(_objs.object_list[i]):
+                    bounding_box = np.array(_objs.object_list[i].bounding_box)
+                    if bounding_box.any():
+                        color_id = generate_color_id(_objs.object_list[i].id)
 
-                    self.create_bbox_rendering(bounding_box, color_id)
+                        self.create_bbox_rendering(bounding_box, color_id)
+        finally:
+            self.mutex.release()
 
-        self.mutex.release()
-        
     def create_bbox_rendering(self, _bbox, _bbox_clr):
         # First create top and bottom full edges
 	    self.BBox_edges.add_full_edges(_bbox, _bbox_clr)

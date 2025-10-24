@@ -218,8 +218,11 @@ void updateCameraSettings(char key, sl::CameraOne &zed) {
             // Reset to default parameters
         case 'r':
             print("Reset all settings to default");
-            for (int s = (int) VIDEO_SETTINGS::BRIGHTNESS; s <= (int) VIDEO_SETTINGS::WHITEBALANCE_TEMPERATURE; s++)
-                zed.setCameraSettings(static_cast<VIDEO_SETTINGS> (s), sl::VIDEO_SETTINGS_VALUE_AUTO);
+            for (int s = (int) VIDEO_SETTINGS::BRIGHTNESS; s < (int) VIDEO_SETTINGS::LAST; s++){
+                auto setting = static_cast<VIDEO_SETTINGS> (s);
+                auto state = zed.setCameraSettings(setting, sl::VIDEO_SETTINGS_VALUE_AUTO);
+                std::cout<< "Setting " << sl::toString(setting) << " reset to default: " << state << std::endl;
+            }
             break;
 
         default :

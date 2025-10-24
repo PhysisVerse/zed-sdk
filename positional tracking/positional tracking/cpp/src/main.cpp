@@ -18,227 +18,563 @@
 //
 ///////////////////////////////////////////////////////////////////////////
 
-/**********************************************************************************
- ** This sample demonstrates how to capture a live 3D reconstruction of a scene  **
- ** as a fused point cloud and display the result in an OpenGL window.           **
- **********************************************************************************/
-
 // ZED includes
 #include <sl/Camera.hpp>
 
 // Sample includes
-#include "GLViewer.hpp"
-
 #include <opencv2/opencv.hpp>
+#include <optional>
+#include "SLAMView.hpp"
 
-// Using std and sl namespaces
-using namespace std;
+// Using the sl namespace
 using namespace sl;
 
-void parse_args(int argc, char **argv,InitParameters& param, sl::Mat &roi);
+//
+// Arguments
+//
+struct Arguments {
+    std::optional<RESOLUTION> resolution = std::nullopt;
+    std::optional<std::string> svoFile = std::nullopt;
+    std::optional<std::string> streamIP = std::nullopt;
+    std::optional<int> streamPort = std::nullopt;
+    bool map = false;
+    std::optional<std::string> inputAreaFile = std::nullopt;
+    std::optional<std::string> outputAreaFile = std::nullopt;
+    std::optional<std::string> roiFile = std::nullopt;
+    bool customInitialPose = false;
+    bool enable2dGroundMode = false;
+};
 
-void print(std::string msg_prefix, sl::ERROR_CODE err_code = sl::ERROR_CODE::SUCCESS, std::string msg_suffix = "");
+//
+// Utility function declarations
+//
+void printHeader(const std::string& text);
+void printUsage(const std::string& programName);
+bool parseArgs(int argc, char* argv[], Arguments& args);
+void printArgs(const Arguments& args);
+void printTrackingParameters(PositionalTrackingParameters trackingParameters);
+void print(std::string message, std::optional<ERROR_CODE> errorCode = std::nullopt, bool showErrorDetail = true);
 
-int main(int argc, char **argv) {
+cv::Mat slMat2cvMat(Mat& input);
+cv::Scalar interpolate_color(const cv::Scalar& color1, const cv::Scalar& color2, float ratio);
 
+//
+// Main
+//
+int main(int argc, char** argv) {
+    //
+    // Parse arguments
+    //
+    printHeader("ZED Positional Tracking");
+
+    if (argc > 1 && std::string(argv[1]) == "--help") {
+        printUsage(argv[0]);
+        return 0;
+    }
+
+    Arguments args;
+    if (!parseArgs(argc, argv, args)) {
+        std::cout << "\n";
+        printUsage(argv[0]);
+        return 1;
+    }
+
+    printArgs(args);
+
+    //
+    // Configure a camera
+    //
     Camera zed;
-    // Set configuration parameters for the ZED
-    InitParameters init_parameters;
-    init_parameters.depth_mode = DEPTH_MODE::NEURAL;
-    init_parameters.coordinate_units = UNIT::METER;
-    init_parameters.coordinate_system = COORDINATE_SYSTEM::RIGHT_HANDED_Y_UP; // OpenGL's coordinate system is right_handed
 
-    sl::Mat roi;
-    parse_args(argc, argv, init_parameters, roi);
+    InitParameters initParameters;
+    initParameters.depth_mode = DEPTH_MODE::NEURAL;
+    initParameters.coordinate_units = UNIT::METER;
+    initParameters.coordinate_system = COORDINATE_SYSTEM::RIGHT_HANDED_Y_UP;
 
+    if (args.resolution) {
+        initParameters.camera_resolution = args.resolution.value();
+    }
+
+    if (args.svoFile) {
+        initParameters.input.setFromSVOFile(args.svoFile.value().c_str());
+        initParameters.svo_real_time_mode = true;
+    } else if (args.streamIP && args.streamPort) {
+        initParameters.input.setFromStream(args.streamIP.value().c_str(), args.streamPort.value());
+    } else if (args.streamIP) {
+        initParameters.input.setFromStream(args.streamIP.value().c_str());
+    }
+
+    //
     // Open the camera
-    auto returned_state = zed.open(init_parameters);
+    //
+    ERROR_CODE status = zed.open(initParameters);
 
-    if (returned_state > ERROR_CODE::SUCCESS) {// Quit if an error occurred
-        print("Open Camera", returned_state, "\nExit program.");
+    if (status > ERROR_CODE::SUCCESS) {
+        print("Failed to open the camera", status);
         zed.close();
-        return EXIT_FAILURE;
+        return 1;
     }
 
-    if(roi.isInit()){
-        auto state = zed.setRegionOfInterest(roi, {sl::MODULE::POSITIONAL_TRACKING});
-        std::cout<<"Applied ROI "<<state<<"\n";
-    }else{
-        // If the region of interest is not loaded from a file, the auto detection can be enabled
-        if(0){
-            sl::RegionOfInterestParameters roi_param;
-            roi_param.auto_apply_module = {sl::MODULE::DEPTH, sl::MODULE::POSITIONAL_TRACKING};
-            zed.startRegionOfInterestAutoDetection(roi_param);
-            print("Region Of Interest auto detection is running.");
-        }
+    //
+    // Configure positional tracking
+    //
+    PositionalTrackingParameters trackingParameters;
+
+    if (args.inputAreaFile) {
+        trackingParameters.area_file_path = args.inputAreaFile.value().c_str();
     }
 
-    REGION_OF_INTEREST_AUTO_DETECTION_STATE roi_state = REGION_OF_INTEREST_AUTO_DETECTION_STATE::NOT_ENABLED;
+    trackingParameters.set_floor_as_origin = false;
+    trackingParameters.set_gravity_as_origin = true;
+    trackingParameters.enable_area_memory = true;
+    trackingParameters.enable_pose_smoothing = false;
+    trackingParameters.enable_imu_fusion = true;
+    trackingParameters.set_as_static = false;
+    trackingParameters.depth_min_range = -1;
+    trackingParameters.enable_2d_ground_mode = args.enable2dGroundMode;
+    trackingParameters.enable_localization_only = false;
+    trackingParameters.mode = POSITIONAL_TRACKING_MODE::GEN_1;
 
-    /* Print shortcuts*/
-    std::cout<<"Shortcuts\n";
-    std::cout<<"\t- 'l' to enable/disable current live point cloud display\n";
-    std::cout<<"\t- 'm' to enable/disable landmark display\n";
-    std::cout<<"\t- 'd' to switch background color from dark to light\n";
-    std::cout<<"\t- 'f' to follow the camera\n";
-    std::cout<<"\t- 'Shift' for soft mouse control / 'alt' for regular control / 'Ctrl' for strong control \n";
-    std::cout<<"\t- 'space' to switch camera view\n";
+    if (args.roiFile) {
+        sl::Mat roi;
+        roi.read(args.roiFile->c_str());
+        zed.setRegionOfInterest(roi);
+    }
 
-    auto camera_infos = zed.getCameraInformation();
+    //
+    // Optionally define an initial pose for the tracking to start from.
+    // This is useful if you know the initial pose of the camera in a previously mapped area.
+    //
+    if (args.customInitialPose) {
+        // clang-format off
 
-    // Setup and start positional tracking
-    Pose pose;
-    POSITIONAL_TRACKING_STATE tracking_state = POSITIONAL_TRACKING_STATE::OFF;
+        // Homogeneous transformation matrix for the initial pose:
+        // For example, we have a translation to (2.0, 4.0, 1.0) in the right-most column,
+        // and a rotation of 45° about the Z-axis in the upper-left 3x3 portion of the matrix.
+        float initialPose[16] = {
+            0.7071f, -0.7071f, 0.0f, 2.0f, 
+            0.7071f,  0.7071f, 0.0f, 4.0f,
+            0.0f,     0.0f,    1.0f, 1.0f,
+            0.0f,     0.0f,    0.0f, 1.0f
+        };
+        // clang-format on
 
-    sl::PositionalTrackingParameters ptp;
-    ptp.mode = sl::POSITIONAL_TRACKING_MODE::GEN_3;
-    returned_state = zed.enablePositionalTracking(ptp);
-    if (returned_state > ERROR_CODE::SUCCESS) {
-        print("Enabling positional tracking failed: ", returned_state);
+        trackingParameters.initial_world_transform = Transform(initialPose);
+    }
+
+    //
+    // Enable positional tracking
+    //
+    status = zed.enablePositionalTracking(trackingParameters);
+
+    if (status > ERROR_CODE::SUCCESS) {
+        print("Failed to enable positional tracking", status);
         zed.close();
-        return EXIT_FAILURE;
+        return 1;
     }
 
-    // Setup runtime parameters
+    printTrackingParameters(trackingParameters);
+
+    //
+    // Set runtime parameters: for example, a low depth confidence to avoid introducing noise
+    //
     RuntimeParameters runtime_parameters;
-    // Use low depth confidence to avoid introducing noise in the constructed model
     runtime_parameters.confidence_threshold = 30;
 
-    auto resolution = camera_infos.camera_configuration.resolution;
+    //
+    // Configure display parameters
+    //
+    std::map<uint64_t, Landmark> landmarkMap;
+    std::vector<Landmark2D> landmarks2D;
 
-    // Define display resolution and check that it fit at least the image resolution
-    
-    sl::Resolution display_resolution = zed.getRetrieveMeasureResolution();
+    uint64_t lastLandmarkUpdate = getCurrentTimeStamp().getSeconds();
+    Resolution displayResolution = zed.getRetrieveMeasureResolution();
 
-    Mat image(display_resolution, MAT_TYPE::U8_C4, sl::MEM::GPU);
-    Mat point_cloud(display_resolution, MAT_TYPE::F32_C4, sl::MEM::GPU);
-    
-    // Point cloud viewer
-    GLViewer viewer;
+    //
+    // Main loop
+    //
+    Mat leftImage = sl::Mat();
+    Mat pointCloud(displayResolution, MAT_TYPE::F32_C4, MEM::GPU);
 
-    viewer.init(argc, argv, image, point_cloud, zed.getCUDAStream());
+    Pose pose;
+    SLAMView view = SLAMView(argc, argv, &leftImage, &pointCloud, zed.getCUDAStream());
+    view.run([&]() {
+        //
+        // Grab the next image frame
+        //
+        ERROR_CODE status = zed.grab(runtime_parameters);
 
-    std::map<uint64_t, sl::Landmark> map_lm;
-    std::vector<sl::float3> map_lm_tracked;
-    std::vector<sl::Landmark2D> map_lm2d;
-    auto last_lm_update = sl::getCurrentTimeStamp().getSeconds();
+        if (status == ERROR_CODE::END_OF_SVOFILE_REACHED) {
+            view.stop();
+            return;
+        } else if (status > ERROR_CODE::SUCCESS) {
+            print("Failed to grab image frame", status);
+            view.stop();
+            return;
+        }
 
-    // Start the main loop
-    while (viewer.isAvailable()) {
-        // Grab a new image
-        sl::ERROR_CODE grab_result = zed.grab(runtime_parameters);
+        // Retrieve the left image
+        zed.retrieveImage(leftImage, VIEW::LEFT, MEM::CPU, displayResolution);
 
-        switch (grab_result) {
-            case sl::ERROR_CODE::SUCCESS:
-            case sl::ERROR_CODE::CORRUPTED_FRAME:
-                // Retrieve the left image
-                zed.retrieveImage(image, VIEW::LEFT, MEM::GPU, display_resolution);
-                zed.retrieveMeasure(point_cloud, MEASURE::XYZBGRA, MEM::GPU, display_resolution);
-                // Retrieve the camera pose data
-                zed.getPosition(pose);
+        // Retrieve the calculated point cloud
+        zed.retrieveMeasure(pointCloud, MEASURE::XYZBGRA, MEM::GPU, displayResolution);
 
-                viewer.updateCameraPose(pose.pose_data, zed.getPositionalTrackingStatus());
+        // Retrieve the calculated camera pose
+        zed.getPosition(pose);
 
-                if(sl::getCurrentTimeStamp().getSeconds() - last_lm_update > 1) {
-                    zed.getPositionalTrackingLandmarks(map_lm);
-                    viewer.pushLM(map_lm);
-                    last_lm_update = sl::getCurrentTimeStamp().getSeconds();
-                }
+        // Update display
+        //
+        view.updatePoseTransform(pose.pose_data);
+        view.updatePositionalTrackingStatus(zed.getPositionalTrackingStatus());
 
-                if(map_lm.size()){
-                    zed.getPositionalTrackingLandmarks2D(map_lm2d);
-                    map_lm_tracked.clear();
-                    for(auto &it: map_lm2d){
-                        if(map_lm.find(it.id) != map_lm.end())
-                            map_lm_tracked.push_back(map_lm[it.id].position);
-                    }
-                    if(map_lm_tracked.size()) viewer.pushTrackedLM(map_lm_tracked);
-                }
+        if (getCurrentTimeStamp().getSeconds() - lastLandmarkUpdate > 1) {
+            zed.getPositionalTrackingLandmarks(landmarkMap);
+            view.updateLandmarks(landmarkMap);
+            lastLandmarkUpdate = getCurrentTimeStamp().getSeconds();
+        }
 
-                // If the region of interest auto detection is running, the resulting mask can be saved and reloaded for later use
-                if(roi_state == sl::REGION_OF_INTEREST_AUTO_DETECTION_STATE::RUNNING &&
-                        zed.getRegionOfInterestAutoDetectionStatus() == sl::REGION_OF_INTEREST_AUTO_DETECTION_STATE::READY) {
-                    sl::String roi_name = "roi_mask.jpg";
-                    std::cout << "Region Of Interest detection done! Saving into " << roi_name << std::endl;
-                    zed.getRegionOfInterest(roi, sl::Resolution(0,0), sl::MODULE::POSITIONAL_TRACKING);
-                    roi.write(roi_name);
-                }
-                roi_state = zed.getRegionOfInterestAutoDetectionStatus();
-                break;
-            default:
-                break;
+        if (view.isLandmarkModeEnabled() && landmarkMap.size()) {
+            zed.getPositionalTrackingLandmarks2D(landmarks2D);
+
+            static const cv::Scalar inlierLandmarkColor(63, 255, 67, 255);
+            static const cv::Scalar outlierLandmarkColor(100, 100, 255, 255);
+
+            Resolution resolution = zed.getCameraInformation().camera_configuration.resolution;
+            float widthRatio = displayResolution.width / (float)resolution.width;
+            float heightRatio = displayResolution.height / (float)resolution.height;
+
+            cv::Mat leftImageCVMat = slMat2cvMat(leftImage);
+            for (auto& landmark2D : landmarks2D) {
+                cv::Scalar color = interpolate_color(inlierLandmarkColor, outlierLandmarkColor, 1 - landmark2D.dynamic_confidence);
+
+                cv::circle(
+                    leftImageCVMat,
+                    cv::Point2f(landmark2D.image_position[0] * widthRatio, landmark2D.image_position[1] * heightRatio),
+                    2,
+                    color,
+                    -1
+                );
+            }
+        }
+    });
+
+    //
+    // OpenGL cleanup
+    //
+    pointCloud.free();
+
+    //
+    // Saving area map
+    //
+    if (args.map) {
+        print("Saving area map to " + args.outputAreaFile.value() + " ...");
+
+        ERROR_CODE status = zed.saveAreaMap(args.outputAreaFile.value().c_str());
+
+        if (status == ERROR_CODE::SUCCESS) {
+            AREA_EXPORTING_STATE exportState = zed.getAreaExportState();
+
+            while (exportState == sl::AREA_EXPORTING_STATE::RUNNING) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                exportState = zed.getAreaExportState();
+            }
+
+            if (exportState == AREA_EXPORTING_STATE::SUCCESS) {
+                print("Successfully saved area map to " + args.outputAreaFile.value());
+            } else {
+                print("Failed to save area map: " + std::string(toString(exportState).c_str()), ERROR_CODE::FAILURE, false);
+            }
+
+        } else {
+            print("Failed to save area map", status);
         }
     }
 
-    // Free allocated memory before closing the camera
-    image.free();
-    point_cloud.free();
-    // Close the ZED
+    // Close the camera
     zed.close();
 
     return 0;
 }
 
-void parse_args(int argc, char **argv,InitParameters& param, sl::Mat &roi)
-{
-    if(argc == 1) return;
-    for(int id = 1; id < argc; id ++) {
-        std::string arg(argv[id]);
-        if(arg.find(".svo")!=string::npos) {
-            // SVO input mode
-            param.input.setFromSVOFile(arg.c_str());
-            cout<<"[Sample] Using SVO File input: "<<arg<<endl;
-        }
+//
+// Utility function definitions
+//
+auto colorBool = [](bool val) -> std::string {
+    return val ? "\033[32mtrue\033[0m" : "\033[31mfalse\033[0m";
+};
 
-        unsigned int a,b,c,d,port;
-        if (sscanf(arg.c_str(),"%u.%u.%u.%u:%d", &a, &b, &c, &d,&port) == 5) {
-            // Stream input mode - IP + port
-            string ip_adress = to_string(a)+"."+to_string(b)+"."+to_string(c)+"."+to_string(d);
-            param.input.setFromStream(String(ip_adress.c_str()),port);
-            cout<<"[Sample] Using Stream input, IP : "<<ip_adress<<", port : "<<port<<endl;
-        }
-        else  if (sscanf(arg.c_str(),"%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
-            // Stream input mode - IP only
-            param.input.setFromStream(String(argv[1]));
-            cout<<"[Sample] Using Stream input, IP : "<<argv[1]<<endl;
-        }
-        else if (arg.find("HD2K") != string::npos) {
-            param.camera_resolution = RESOLUTION::HD2K;
-            cout << "[Sample] Using Camera in resolution HD2K" << endl;
-        }else if (arg.find("HD1200") != string::npos) {
-            param.camera_resolution = RESOLUTION::HD1200;
-            cout << "[Sample] Using Camera in resolution HD1200" << endl;
-        } else if (arg.find("HD1080") != string::npos) {
-            param.camera_resolution = RESOLUTION::HD1080;
-            cout << "[Sample] Using Camera in resolution HD1080" << endl;
-        } else if (arg.find("HD720") != string::npos) {
-            param.camera_resolution = RESOLUTION::HD720;
-            cout << "[Sample] Using Camera in resolution HD720" << endl;
-        }else if (arg.find("SVGA") != string::npos) {
-            param.camera_resolution = RESOLUTION::SVGA;
-            cout << "[Sample] Using Camera in resolution SVGA" << endl;
-        }else if (arg.find("VGA") != string::npos) {
-            param.camera_resolution = RESOLUTION::VGA;
-            cout << "[Sample] Using Camera in resolution VGA" << endl;
-        }else if ((arg.find(".png") != string::npos) || ((arg.find(".jpg") != string::npos))) {
-            roi.read(arg.c_str());
-            cout << "[Sample] Using Region of intererest from "<< arg << endl;
-        }
-    }
+auto colorValue = [](const auto& val) -> std::string {
+    std::ostringstream oss;
+    oss << "\033[36m" << val << "\033[0m";
+    return oss.str();
+};
+
+void printHeader(const std::string& text) {
+    const int width = 80;
+    const std::string border(width, '=');
+    int padding = (width - text.length()) / 2;
+
+    std::cout << "\n" << border << "\n";
+    std::cout << std::string(padding, ' ') << text << "\n";
+    std::cout << border << "\n\n";
 }
 
-void print(std::string msg_prefix, sl::ERROR_CODE err_code, std::string msg_suffix) {
-    cout <<"[Sample]";
-    if (err_code != sl::ERROR_CODE::SUCCESS)
-        cout << "[Error] ";
-    else
-        cout<<" ";
-    cout << msg_prefix << " ";
-    if (err_code != sl::ERROR_CODE::SUCCESS) {
-        cout << " | " << toString(err_code) << " : ";
-        cout << toVerbose(err_code);
+void printUsage(const std::string& programName) {
+    std::cout << "Usage: " << programName << " [options]\n\n"
+              << "Options:\n"
+              << "  --help                      Shows usage information.\n"
+              << "  --resolution <mode>         Optional. Resolution options: (HD2K | HD1200 | HD1080 | HD720 | SVGA | VGA)\n"
+              << "  --svo <filename.svo>        Optional. Use SVO file input. Mutually exclusive with --stream\n"
+              << "  --stream <ip[:port]>        Optional. Use network streaming input. Mutually exclusive with --svo\n"
+              << "  -i <input_area_file>        Optional. Input area file used in explore mode (default) or --map mode\n"
+              << "  --map -o <output_area_file> Optional. Map mode creates or updates an .area file.\n"
+              << "                                        Requires -o <output_area_filename> for generated map\n"
+              << "  --roi <roi_filepath>        Optional. Region of interest image mask to ignore a static area\n"
+              << "  --custom-initial-pose       Optional. Use custom initial pose (see code comments for more detail)\n"
+              << "  --2d-ground-mode            Optional. Enable 2D ground mode\n"
+              << "\nExamples:\n"
+              << "  " << programName << " --map -o new_map.area\n"
+              << "  " << programName << " --svo recording.svo2 -i map.area\n";
+}
+
+bool parseArgs(int argc, char* argv[], Arguments& args) {
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+
+        if (arg == "--resolution" && i + 1 < argc) {
+            RESOLUTION resolution;
+            bool error = fromString(argv[++i], resolution);
+
+            if (error) {
+                print("Invalid resolution: " + std::string(argv[i]), ERROR_CODE::FAILURE, false);
+                return false;
+            }
+            args.resolution = resolution;
+        } else if (arg == "--svo" && i + 1 < argc) {
+            if (args.streamIP) {
+                print("Options --svo and --stream are mutually exclusive", ERROR_CODE::FAILURE, false);
+                return false;
+            }
+
+            std::string filename = argv[++i];
+            if (filename.find(".svo") == std::string::npos) {
+                print("Option --svo requires a filename that contains '.svo'", ERROR_CODE::FAILURE, false);
+                return false;
+            }
+
+            args.svoFile = filename;
+        } else if (arg == "--stream" && i + 1 < argc) {
+            if (args.svoFile) {
+                print("Options --stream and --svo are mutually exclusive", ERROR_CODE::FAILURE, false);
+                return false;
+            }
+
+            std::string ip;
+            std::optional<int> port;
+
+            const std::string& address = argv[++i];
+            auto colonPos = address.find(':');
+
+            if (colonPos != std::string::npos) {
+                ip = address.substr(0, colonPos);
+                std::string portStr = address.substr(colonPos + 1);
+
+                try {
+                    port = std::stoi(portStr);
+                } catch (const std::exception& e) {
+                    print("Invalid port in --stream: " + portStr, ERROR_CODE::FAILURE, false);
+                    return false;
+                }
+            } else {
+                ip = address;
+            }
+
+            args.streamIP = ip;
+            args.streamPort = port;
+        } else if (arg == "--map") {
+            args.map = true;
+        } else if (arg == "-i" && i + 1 < argc) {
+            args.inputAreaFile = argv[++i];
+        } else if (arg == "-o" && i + 1 < argc) {
+            args.outputAreaFile = argv[++i];
+        } else if (arg == "--roi" && i + 1 < argc) {
+            args.roiFile = argv[++i];
+        } else if (arg == "--custom-initial-pose") {
+            args.customInitialPose = true;
+        } else if (arg == "--2d-ground-mode") {
+            args.enable2dGroundMode = true;
+        } else {
+            print("Unrecognized or incomplete argument: " + arg, ERROR_CODE::FAILURE, false);
+            return false;
+        }
     }
-    if (!msg_suffix.empty())
-        cout << " " << msg_suffix;
-    cout << endl;
+
+    if (args.map && !args.outputAreaFile) {
+        print("Option --map requires -o <output_area_file>", ERROR_CODE::FAILURE, false);
+        return false;
+    }
+
+    return true;
+}
+
+void printArgs(const Arguments& args) {
+    if (args.resolution) {
+        std::string message = "Preferred Resolution: ";
+
+        switch (args.resolution.value()) {
+            case RESOLUTION::HD2K:
+                message += "HD2K";
+                break;
+            case RESOLUTION::HD1200:
+                message += "HD1200";
+                break;
+            case RESOLUTION::HD1080:
+                message += "HD1080";
+                break;
+            case RESOLUTION::HD720:
+                message += "HD720";
+                break;
+            case RESOLUTION::SVGA:
+                message += "SVGA";
+                break;
+            case RESOLUTION::VGA:
+                message += "VGA";
+                break;
+            default:
+                break;
+        }
+
+        print(message);
+    }
+
+    if (args.svoFile) {
+        print("Using SVO file input: " + args.svoFile.value());
+    }
+
+    if (args.streamIP) {
+        std::string suffix = args.streamPort ? ":" + std::to_string(args.streamPort.value()) : "";
+        print("Using stream input " + args.streamIP.value() + suffix);
+    }
+
+    if (args.map) {
+        print("Positional tracking mode: Map");
+    } else {
+        print("Positional tracking mode: Explore (default)");
+    }
+
+    if (args.inputAreaFile) {
+        print("Using input area file: " + args.inputAreaFile.value());
+    }
+
+    if (args.outputAreaFile) {
+        print("Output file: " + args.outputAreaFile.value());
+    }
+
+    if (args.roiFile) {
+        print("Using ROI file: " + args.roiFile.value());
+    }
+
+    if (args.customInitialPose) {
+        print("Enabled custom initial pose");
+    }
+
+    if (args.enable2dGroundMode) {
+        print("Enabled 2D ground mode");
+    }
+
+    std::cout << "\n";
+}
+
+void printTrackingParameters(PositionalTrackingParameters trackingParameters) {
+    printHeader("Positional Tracking Parameters");
+    print("set_floor_as_origin   " + colorBool(trackingParameters.set_floor_as_origin));
+    print("set_gravity_as_origin " + colorBool(trackingParameters.set_gravity_as_origin));
+    print("enable_area_memory    " + colorBool(trackingParameters.enable_area_memory));
+    print("enable_pose_smoothing " + colorBool(trackingParameters.enable_pose_smoothing));
+    print("enable_imu_fusion     " + colorBool(trackingParameters.enable_imu_fusion));
+    print("set_as_static         " + colorBool(trackingParameters.set_as_static));
+    print("depth_min_range       " + colorValue(trackingParameters.depth_min_range));
+    print("enable_2d_ground_mode " + colorBool(trackingParameters.enable_2d_ground_mode));
+    print("mode                  " + colorValue(toString(trackingParameters.mode)));
+
+    printHeader("Interaction");
+    print("'space' to toggle camera view visibility");
+    print("'d' to switch background color from dark to light");
+    print("'p' to enable / disable current live point cloud display");
+    print("'l' to enable / disable landmark display");
+    print("'f' to follow the camera");
+    print("'z' to reset the view");
+    print("'ctrl' + drag to rotate");
+    print("'esc' to exit");
+    std::cout << "\n";
+}
+
+void print(std::string message, std::optional<ERROR_CODE> errorCode, bool showErrorDetail) {
+    std::cout << "\033[36m[Sample]\033[0m";
+
+    if (errorCode && errorCode != ERROR_CODE::SUCCESS) {
+        std::cout << " \033[31m[Error]\033[0m ";
+    } else {
+        std::cout << " ";
+    }
+
+    std::cout << message;
+
+    if (errorCode && errorCode != ERROR_CODE::SUCCESS && showErrorDetail) {
+        std::cout << " | " << toString(errorCode.value()) << ": " << toVerbose(errorCode.value());
+    }
+
+    std::cout << "\n";
+}
+
+cv::Mat slMat2cvMat(Mat& input) {
+    int cv_type = -1;
+
+    switch (input.getDataType()) {
+        case MAT_TYPE::F32_C1:
+            cv_type = CV_32FC1;
+            break;
+        case MAT_TYPE::F32_C2:
+            cv_type = CV_32FC2;
+            break;
+        case MAT_TYPE::F32_C3:
+            cv_type = CV_32FC3;
+            break;
+        case MAT_TYPE::F32_C4:
+            cv_type = CV_32FC4;
+            break;
+        case MAT_TYPE::U8_C1:
+            cv_type = CV_8UC1;
+            break;
+        case MAT_TYPE::U8_C2:
+            cv_type = CV_8UC2;
+            break;
+        case MAT_TYPE::U8_C3:
+            cv_type = CV_8UC3;
+            break;
+        case MAT_TYPE::U8_C4:
+            cv_type = CV_8UC4;
+            break;
+        default:
+            break;
+    }
+
+    return cv::Mat(input.getHeight(), input.getWidth(), cv_type, input.getPtr<sl::uchar1>(MEM::CPU));
+}
+
+cv::Scalar interpolate_color(const cv::Scalar& color1, const cv::Scalar& color2, float ratio) {
+    if (ratio < 0.0f) {
+        ratio = 0.0f;
+    }
+
+    if (ratio > 1.0f) {
+        ratio = 1.0f;
+    }
+
+    return cv::Scalar(
+        color1[0] * (1 - ratio) + color2[0] * ratio,
+        color1[1] * (1 - ratio) + color2[1] * ratio,
+        color1[2] * (1 - ratio) + color2[2] * ratio,
+        color1[3] * (1 - ratio) + color2[3] * ratio
+    );
 }
